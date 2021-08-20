@@ -1,0 +1,194 @@
+## Name: ATHARV KOTWAL, Roll No: 170110068
+## Please ADD 15 seconds in Octave command Prompt to execute the complete code. Sometimes all images are not retrieved in one go.
+
+## In triangle ADG, AD+DG < AG, Hence, value of DG(smallest side) is doubled to 198.
+## Due to this, point G shifts downwards. Coordinates of G are calculated in first 3 lines of code.
+
+## Initial Orientation of AB is horizontal, i.e. theta = 0 at time = 0. It rotates counter clockwise with angular speed omega.
+## Section 1 contains the functions required to perform certain calculations.
+## As discussed in the coding procedure in the class, only Link lengths and the poitions of respective joints between them is required to perform the simulation
+## These Constraints are defined in Section 2 and the Jacobian is formed part by part during Time Marching in Section 3
+## Section 3 contains Time Marching i.e. calculating position,velocity and acceleration for a particular time step and moving forward to next time step. 
+## Time step chosen is 0.5 sec so that the difference between plotted images is clearly visible
+
+disp("Atharv Kotwal: 170110068, Time Step = 0.5 sec");
+# Given Values of sides (DG = 198 is taken)
+[AB, BC, CD ,DA, BE, CE ,EF, FG, AG, DG, omega] = deal(85, 198, 156, 181, 146, 133, 205, 191, 299, 198, 0.90);
+# Calculating Coordinates of G which is on the ground (fixed link)
+angleDAG = acos( (DA**2 + AG**2 - DG**2) / (2*DA*AG) );
+[AGx, AGy] = deal( AG*cos(angleDAG) , -1*AG*sin(angleDAG) );
+
+#### Section 1: Set of Functions required to perform certain calculations.
+
+function q = defineLink(i,q,th)           ## Defining i_th Link with random xi,yi,thi
+    q(1,3*i+1:3*i+3) = [1,1,deg2rad(th)]; ## Randomly Initializing Xi,Yi,thi
+endfunction
+function t = defineFixedJoint(i,cx,cy,cth) ## Defining coordinates of fixed joint for Link i
+  t.type = 'fixed';
+  t.ridx = -1;
+  [t.params.i , t.params.cx , t.params.cy , t.params.cth ] = deal(i , cx , cy, cth);
+ endfunction
+function t = defineRevoluteJoint(i,xp,yp,j,xq,yq) ## Defining a revolute joint between link i and link j
+  t.type = 'revolute';
+  t.ridx = -1;
+  [t.params.i , t.params.xp , t.params.yp , t.params.j,t.params.xq , t.params.yq ] = deal(i,xp,yp,j,xq,yq);
+ endfunction
+function t = defineDrivingConstraint(i,w)   ## Defining a constant driving speed constraint for link i
+  t.type = 'driving';
+  t.ridx = -1;
+  [t.params.i , t.params.w ] = deal(i,w);
+ endfunction
+function [C,Cq,row_idx] = fixedJoint(t ,q,C,Cq) ## Applying Fixed Joint Constraint by Constraint Jacobian calculation
+    [i,cx,cy,cth] = deal(t.params.i , t.params.cx , t.params.cy , t.params.cth );
+    row_idx = size(C)(1);
+    C(row_idx+1:row_idx+3,1) = [q(3*i+1)-cx,q(3*i+2)-cy, q(3*i+3)-cth ];
+    Cq(row_idx+1:row_idx+3,3*i+1:3*i+3) = [1,0,0;0,1,0;0,0,1];
+endfunction
+
+function [C,Cq,row_idx] = revoluteJoint(t,q,C,Cq)  ## Applying Revolute Joint Constraint by Constraint Jacobian calculation
+    [i,xp,yp,j,xq,yq] = deal(t.params.i , t.params.xp , t.params.yp , t.params.j,t.params.xq , t.params.yq );    
+    row_idx = size(C)(1);
+    [xi,yi,thi,xj,yj,thj] = deal( q(3*i+1),q(3*i+2),q(3*i+3),q(3*j+1),q(3*j+2),q(3*j+3) );
+    C(row_idx+1:row_idx+2,1) = [(xi + xp*cos(thi) - yp*sin(thi)) - (xj + xq*cos(thj) - yq*sin(thj)) , (yi + xp*sin(thi) + yp*cos(thi)) - (yj + xq*sin(thj) + yq*cos(thj))  ];
+    Cq(row_idx+1:row_idx+2,3*i+1:3*i+3) = [1,0,(-xp*sin(thi) - yp*cos(thi)) ; 0,1,(xp*cos(thi) - yp*sin(thi)) ];
+    Cq(row_idx+1:row_idx+2,3*j+1:3*j+3) = [-1,0,(xq*sin(thj) + yq*cos(thj)) ; 0,-1,(-xq*cos(thj) + yq*sin(thj)) ];
+endfunction
+
+function [C,Cq,row_idx] = driving_constantspeed(t,time,q,C,Cq)  ## Applying Driving Constraint by Constraint Jacobian calculation
+    [i,w] = deal(t.params.i , t.params.w);
+    row_idx = size(C)(1);
+    C(row_idx+1,1) = [ q(3*i+3) - w*time ];
+    Cq(row_idx+1,3*i+3) = [1];
+endfunction
+
+function [Cqt,Ctt,Cq_qdot_q] = AccfixedJoint( t , Cqt , Ctt , Cq_qdot_q)  ##  Acceleration of fixed joint matrix calculations
+    [i,row_idx] = deal(t.params.i , t.ridx );
+    Ctt( row_idx+1:row_idx+3 ,1) = [0,0,0];
+    Cqt( row_idx+1:row_idx+3,3*i+1:3*i+3 ) = [1,0,0;0,1,0;0,0,1];
+    Cq_qdot_q( row_idx+1:row_idx+3,3*i+1:3*i+3 ) = [0,0,0;0,0,0;0,0,0];
+endfunction
+
+function [Cqt,Ctt,Cq_qdot_q] = AccrevoluteJoint(t,q,q_dot, Cqt , Ctt , Cq_qdot_q)  ##  Acceleration of revolute joint matrix calculations
+    [row_idx, i,xp,yp,j,xq,yq] = deal(t.ridx, t.params.i , t.params.xp , t.params.yp , t.params.j,t.params.xq , t.params.yq );    
+    [xi,yi,thi,xj,yj,thj] = deal( q(3*i+1),q(3*i+2),q(3*i+3),q(3*j+1),q(3*j+2),q(3*j+3) );
+    
+    Ctt(row_idx+1:row_idx+2,1) = [0,0];
+    Cqt(row_idx+1:row_idx+2,3*i+1:3*i+3) = [0,0,0;0,0,0];
+    Cqt(row_idx+1:row_idx+2,3*j+1:3*j+3) = [0,0,0;0,0,0];
+    Cq_qdot_q(row_idx+1:row_idx+2,3*i+1:3*i+3) = [0,0,(-xp*cos(thi) + yp*sin(thi))*q_dot(3*i+3);0,0,(-xp*sin(thi) - yp*cos(thi))*q_dot(3*i+3)];
+    Cq_qdot_q(row_idx+1:row_idx+2,3*j+1:3*j+3) = [0,0,( xq*cos(thj) - yq*sin(thj))*q_dot(3*j+3);0,0,( xq*sin(thj) + yq*cos(thj))*q_dot(3*j+3)];
+endfunction
+
+function [Cqt,Ctt,Cq_qdot_q] = Accdriving_constantspeed(t, Cqt , Ctt , Cq_qdot_q)  ##  Acceleration of driving constraint matrix calculations
+    [i,row_idx] = deal(t.params.i , t.ridx);
+    Ctt(row_idx+1,1) = [0];
+    Cqt(row_idx+1,3*i+3) = [0];
+    Cq_qdot_q(row_idx+1,3*i+3) = [0];
+endfunction
+
+#### Section 2: Defining the Problem
+## q vector contains Xi,Yi,Thi for all the defined links at any point of time
+q = [];
+## Defining/Initializing Links: All Links are initialized with same xi,yi values = (1,1) and random thi values
+angles = [0,0,45,60,0,90,45,-30];
+for n = 0:7                       ## Initializing 8 links, 0 to 7
+q = defineLink(n,q,angles(n+1));
+endfor
+## Defining Constraints/Joints
+constraints = [];     ## Array of All constraints
+## Adding Fixed Link constraint to Link 0
+constraints = [constraints ,  defineFixedJoint(i=0,cx=0,cy=0,cth=0) ];
+## Adding Revolute Joint Constraints between link i and 1ink j
+constraints = [constraints ,  defineRevoluteJoint(i=0,xp= 0,yp= 0,j=1,xq= 0,yq= 0) ]; 
+constraints = [constraints ,  defineRevoluteJoint(i=1,xp=AB,yp= 0,j=2,xq= 0,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=2,xp=BC,yp= 0,j=3,xq=CD,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=3,xp= 0,yp= 0,j=0,xq=DA,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=4,xp= 0,yp= 0,j=2,xq= 0,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=4,xp=BE,yp= 0,j=5,xq= 0,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=5,xp=CE,yp= 0,j=3,xq=CD,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=5,xp= 0,yp= 0,j=6,xq=EF,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=6,xp= 0,yp= 0,j=7,xq= 0,yq= 0) ];
+constraints = [constraints ,  defineRevoluteJoint(i=7,xp=FG,yp= 0,j=0,xq=AGx,yq=AGy) ];
+## Adding Constant angular velocity constraint on link i with speed w = omega. 
+## Iniital Angle of Link AB = 0 deg at time = 0
+constraints = [constraints ,  defineDrivingConstraint(i = 1,w = omega) ];
+
+#### Section 3: Time Marching
+## Time step = 0.5 sec. Total Time = 2 sec.
+del_t = 0.5;
+for time = 0:del_t:2
+  ### Position Analysis
+  delq = [12345];  ## Random values to start while loop
+  C = [12345];
+  ## while loop for Newton Raphson Convergence for Position Analysis
+  ## C = Constraint Matrix , Cq = Constraint Jacobian
+  while (norm(delq) > 1) || (norm(C) > 1)
+      C = [];
+      Cq = [];
+      ## All the constraints defined go through this for loop and Jacobian is constructed part by part
+      for p = 1:size(constraints)(2)
+          if strcmp(constraints(p).type , "fixed") == 1
+            [C,Cq,constraints(p).ridx] = fixedJoint(constraints(p),q,C,Cq);
+          elseif strcmp(constraints(p).type , "revolute") == 1
+            [C,Cq,constraints(p).ridx] = revoluteJoint(constraints(p),q,C,Cq);
+          elseif strcmp(constraints(p).type , "driving") == 1
+            [C,Cq,constraints(p).ridx] = driving_constantspeed(constraints(p),time,q,C,Cq);
+          else
+            disp("Invalid Type");
+          endif
+      endfor
+      ## Calculating position for this iteration
+      delq = inv(Cq)*(-C);
+      q = q + transpose(delq);
+  endwhile
+  
+  ### Velocity Analysis
+  ## q_dot = Velocity vector containing Xi_dot, Yi_dot, Thi_dot for all the Links
+  Ct = zeros(size(C));
+  for constraint = constraints;
+    if strcmp( constraint.type , "driving" ) == 1
+      Ct(constraint.ridx+1,1) = [-1*constraint.params.w];
+    endif
+  endfor
+  q_dot = inv(Cq)*(-Ct);
+  
+  ### Acceleration Analysis
+  ## q_dot_dot = Acceleration Vector containing respecting acceleration values for all Links
+  Cqt = zeros(size(Cq));
+  Ctt = zeros(size(q_dot));
+  Cq_qdot_q = zeros(size(Cq));
+  for const = constraints
+          if strcmp(const.type , "fixed") == 1
+            [Cqt,Ctt,Cq_qdot_q] = AccfixedJoint(const, Cqt , Ctt , Cq_qdot_q);
+          elseif strcmp(const.type , "revolute") == 1
+            [Cqt,Ctt,Cq_qdot_q] = AccrevoluteJoint(const,q,q_dot, Cqt , Ctt , Cq_qdot_q);
+          elseif strcmp(const.type , "driving") == 1
+            [Cqt,Ctt,Cq_qdot_q] = Accdriving_constantspeed(const, Cqt , Ctt , Cq_qdot_q);
+          else
+            disp("Invalid Type");
+          endif
+  endfor
+  Qd = (-1*Cq_qdot_q * q_dot) -2*Cqt*q_dot - Ctt;
+  q_dot_dot = inv(Cq)*(Qd);
+  
+  ## Plotting the Position for this timestep
+
+  figure(1+10*time);
+  l = [AB,BC,CD,BE,CE,EF,FG];
+  points1 = ['A','B','D',' ','E','F',' '];
+  points2 = [' ',' ','C',' ',' ',' ','G'];
+  for k = 1:7  
+    [p1x,p1y,th] = deal( q(3*k+1) ,q(3*k+2),q(3*k +3));
+    [p2x,p2y] = deal( p1x + l(k)*cos(th) , p1y + l(k)*sin(th) );
+    line([p1x,p2x],[ p1y,p2y] , "linewidth" , 2);
+    text (p1x, p1y-10 ,points1(k) , "fontsize", 20, "color","red","fontweight", 'bold');
+    text (p2x, p2y-10 ,points2(k) , "fontsize", 20, "color","red","fontweight", 'bold');
+    title(["Time: ",num2str(time)," sec"],"fontsize", 24, "color","black")
+    ylim([-250,200]);
+    xlim([-100,300]);
+  endfor
+  
+  ### Calculating value of q for next iteration using q_dot(velocity) and q_dot_dot(acceleration)
+  q = q + transpose(q_dot * del_t + 0.5*(del_t**2)*q_dot_dot);
+endfor
+##### END of Code ######
